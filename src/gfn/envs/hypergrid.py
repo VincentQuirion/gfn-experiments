@@ -152,8 +152,9 @@ class HyperGrid(Env):
     def maskless_backward_step(self, states: StatesTensor, actions: TensorLong) -> None:
         states.scatter_(-1, actions.unsqueeze(-1), -1, reduce="add")
 
-    def reward(self, final_states: States) -> TensorFloat:
-        final_states_raw = final_states.states_tensor
+    def reward(self, final_states=None, final_states_raw=None) -> TensorFloat:
+        if final_states_raw is None:    
+            final_states_raw = final_states.states_tensor
         R0, R1, R2 = (self.R0, self.R1, self.R2)
         ax = abs(final_states_raw / (self.height - 1) - 0.5)
         if not self.reward_cos:
@@ -231,3 +232,57 @@ class HyperGrid(Env):
     @property
     def terminating_states(self) -> States:
         return self.all_states
+
+
+class IdxAwareHyperGrid(HyperGrid):
+    def __init__(
+        self,
+        reward=None,
+        *args,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.reward = self.reward8x8 if reward == "8x8" else self._reward
+    
+
+    def _reward(self, final_states=None, final_states_raw=None, idxs=None) -> TensorFloat:
+        if final_states_raw is None:    
+            final_states_raw = final_states.states_tensor
+        reward = super().reward(final_states, final_states_raw)
+
+        seen = torch.full((final_states_raw.shape), -2)
+
+        for i, row in enumerate(final_states_raw):
+            in_seen = False
+            for seen_tensor in seen:
+                if torch.equal(seen_tensor, row):
+                    in_seen = True
+                    break
+                    
+            if in_seen:
+                reward[i] = torch.tensor(self.R0)
+            else:
+                seen[i] = row
+
+        return reward
+
+    def reward8x8(self, final_states=None, final_states_raw=None, idxs=None, base_reward=None):
+        if final_states_raw is None:    
+            final_states_raw = final_states.states_tensor
+        reward = super().reward(final_states, final_states_raw)
+        means = torch.full((4, 2), -1., dtype=torch.long)
+
+        for i in range(4):
+            selected_states = final_states_raw[idxs==i]
+            mean = torch.mean(selected_states, dim=0, dtype=torch.float)
+
+            reward[idxs==i][(selected_states - mean).pow(2).sum(dim=1).sqrt() > 2] = self.R0
+
+            for m in means:
+                if not torch.equal(m, torch.full((2,), -1., dtype=torch.long)):
+                    reward[idxs==i][(selected_states - m).pow(2).sum(dim=1).sqrt() < 5] = self.R0
+
+            means[i] = mean
+
+        return reward
+

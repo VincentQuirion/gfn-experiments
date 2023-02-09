@@ -115,6 +115,7 @@ class TrajectoryDecomposableLoss(Loss, ABC):
     def get_pfs_and_pbs(
         self,
         trajectories: Trajectories,
+        idxs=None,
         fill_value: float = 0.0,
         temperature: float = 1.0,
         epsilon=0.0,
@@ -141,9 +142,11 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         # fill value is the value used for invalid states (sink state usually)
         if trajectories.is_backward:
             raise ValueError("Backward trajectories are not supported")
-
         valid_states = trajectories.states[~trajectories.states.is_sink_state]
         valid_actions = trajectories.actions[trajectories.actions != -1]
+
+        if idxs is not None:
+            idxs = idxs.repeat(trajectories.states.states_tensor.shape[0], 1)[~trajectories.states.is_sink_state]
 
         # uncomment next line for debugging
         # assert trajectories.states.is_sink_state[:-1].equal(trajectories.actions == -1)
@@ -156,7 +159,7 @@ class TrajectoryDecomposableLoss(Loss, ABC):
         )
         log_pf_trajectories = None
         if not no_pf:
-            valid_pf_logits = self.actions_sampler.get_logits(valid_states)
+            valid_pf_logits = self.actions_sampler.get_logits(valid_states, idxs=idxs)
             valid_pf_logits = valid_pf_logits / temperature
             valid_log_pf_all = valid_pf_logits.log_softmax(dim=-1)
             valid_log_pf_all = (
@@ -173,8 +176,12 @@ class TrajectoryDecomposableLoss(Loss, ABC):
             log_pf_trajectories[trajectories.actions != -1] = valid_log_pf_actions
 
         valid_pb_logits = self.backward_actions_sampler.get_logits(
+            valid_states[~valid_states.is_initial_state],
+            idxs=idxs[~valid_states.is_initial_state]
+        ) if idxs is not None else self.backward_actions_sampler.get_logits(
             valid_states[~valid_states.is_initial_state]
         )
+
         valid_log_pb_all = valid_pb_logits.log_softmax(dim=-1)
         non_exit_valid_actions = valid_actions[
             valid_actions != trajectories.env.n_actions - 1

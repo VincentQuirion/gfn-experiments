@@ -6,7 +6,7 @@ from torchtyping import TensorType
 from gfn.containers import States
 from gfn.envs import Env
 from gfn.envs.preprocessors.base import EnumPreprocessor
-from gfn.modules import GFNModule, NeuralNet, Tabular, Uniform, ZeroGFNModule
+from gfn.modules import GFNModule, NeuralNet, Tabular, Uniform, ZeroGFNModule, IdxAwareNeuralNet
 
 # Typing
 OutputTensor = TensorType["batch_shape", "output_dim", float]
@@ -21,7 +21,7 @@ class FunctionEstimator(ABC):
         module: Optional[GFNModule] = None,
         output_dim: Optional[int] = None,
         module_name: Optional[
-            Literal["NeuralNet", "Uniform", "Tabular", "Zero"]
+            Literal["NeuralNet", "Uniform", "Tabular", "Zero", "IdxAwareNeuralNet"]
         ] = None,
         **nn_kwargs,
     ) -> None:
@@ -31,7 +31,7 @@ class FunctionEstimator(ABC):
             env (Env): the environment.
             module (Optional[GFNModule], optional): The module to use. Defaults to None.
             output_dim (Optional[int], optional): Used only if module is None. Defines the output dimension of the module. Defaults to None.
-            module_name (Optional[Literal[NeuralNet, Uniform, Tabular, Zero]], optional): Used only if module is None. What module to use. Defaults to None.
+            module_name (Optional[Literal[NeuralNet, Uniform, Tabular, Zero], IdxAwareNeuralNet], optional): Used only if module is None. What module to use. Defaults to None.
             **nn_kwargs: Keyword arguments to pass to the module, if module_name is NeuralNet.
         """
         self.env = env
@@ -41,6 +41,14 @@ class FunctionEstimator(ABC):
                 assert len(env.preprocessor.output_shape) == 1
                 input_dim = env.preprocessor.output_shape[0]
                 module = NeuralNet(
+                    input_dim=input_dim,
+                    output_dim=output_dim,
+                    **nn_kwargs,
+                )
+            elif module_name == "IdxAwareNeuralNet":
+                assert len(env.preprocessor.output_shape) == 1
+                input_dim = env.preprocessor.output_shape[0]
+                module = IdxAwareNeuralNet(
                     input_dim=input_dim,
                     output_dim=output_dim,
                     **nn_kwargs,
@@ -62,8 +70,8 @@ class FunctionEstimator(ABC):
         else:
             self.preprocessor = env.preprocessor
 
-    def __call__(self, states: States) -> OutputTensor:
-        return self.module(self.preprocessor(states))
+    def __call__(self, states: States, idxs=None) -> OutputTensor:
+        return self.module(self.preprocessor(states)) if idxs is None else self.module(self.preprocessor(states), idxs)
 
     def __repr__(self):
         return f"{self.__class__.__name__}({self.module})"

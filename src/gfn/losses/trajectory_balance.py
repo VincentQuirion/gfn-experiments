@@ -52,11 +52,11 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
         self.on_policy = on_policy
 
     def get_scores(
-        self, trajectories: Trajectories
+        self, trajectories: Trajectories, idxs=None
     ) -> Tuple[ScoresTensor, ScoresTensor, ScoresTensor]:
 
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
-            trajectories, no_pf=self.on_policy
+            trajectories, idxs=idxs, no_pf=self.on_policy
         )
         if self.on_policy:
             log_pf_trajectories = trajectories.log_probs
@@ -73,8 +73,8 @@ class TrajectoryBalance(TrajectoryDecomposableLoss):
             log_pf_trajectories - log_pb_trajectories - log_rewards,
         )
 
-    def __call__(self, trajectories: Trajectories) -> LossTensor:
-        _, _, scores = self.get_scores(trajectories)
+    def __call__(self, trajectories: Trajectories, idxs=None) -> LossTensor:
+        _, _, scores = self.get_scores(trajectories, idxs)
         loss = (scores + self.parametrization.logZ.tensor).pow(2).mean()
         if torch.isnan(loss):
             raise ValueError("loss is nan")

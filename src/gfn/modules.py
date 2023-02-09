@@ -5,8 +5,9 @@ import torch
 import torch.nn as nn
 from torchtyping import TensorType
 
-# Typing
+import gfn.config
 
+# Typing
 InputTensor = TensorType["batch_shape", "input_shape", float]
 OutputTensor = TensorType["batch_shape", "output_dim", float]
 
@@ -154,3 +155,50 @@ class Uniform(ZeroGFNModule):
     """Use this module for uniform policies for example. This is because logits = 0 is equivalent to uniform policy"""
 
     pass
+
+
+# TODO : Finish typing
+class IdxAwareNeuralNet(NeuralNet):
+    def __init__(
+        self,
+        input_dim: int,
+        *args,
+        batch_size: int,
+        embedding_dim: Optional[int] = 128,
+        embedding_layer: Optional[nn.Module] = None,
+        **kwargs
+    ):
+        """Implements an idx-aware basic MLP.
+
+        Args:
+            batch_size (int): batch size (max idx that will be given as input)
+            *args -> see NeuralNet parent class
+            embedding_dim (Optional[int], optional): Dimensions of the idx embedding vector
+            **kwargs -> see NeuralNet parent class
+        """
+        self.batch_size = batch_size
+
+        # Modify NeuralNet's input_dim to account for the embedding
+        input_dim += embedding_dim
+
+        super().__init__(input_dim, *args, **kwargs)
+        if embedding_layer is None:
+            self.idx_embedding_layer = nn.Embedding(batch_size, embedding_dim)
+        else:
+            self.idx_embedding_layer = embedding_layer
+
+
+    def forward(self, preprocessed_states: InputTensor, idxs) -> OutputTensor:
+        if self.device is None:
+            self.device = preprocessed_states.device
+            self.to(self.device)
+
+        num_states = preprocessed_states.shape[0]
+
+        idx_embeddings = self.idx_embedding_layer(idxs)
+
+        preprocessed_states = torch.cat((idx_embeddings, preprocessed_states), dim=1)
+        
+        logits = self.torso(preprocessed_states)
+        logits = self.last_layer(logits)
+        return logits

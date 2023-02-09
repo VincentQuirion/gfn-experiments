@@ -20,7 +20,7 @@ class ActionsSampler(ABC):
     """
 
     @abstractmethod
-    def sample(self, states: States) -> Tuple[Tensor1D, Tensor1D]:
+    def sample(self, states: States, idxs=None) -> Tuple[Tensor1D, Tensor1D]:
         """
         Args:
             states (States): A batch of states.
@@ -63,7 +63,7 @@ class DiscreteActionsSampler(ActionsSampler):
         self.sf_bias = sf_bias
         self.epsilon = epsilon
 
-    def get_raw_logits(self, states: States) -> Tensor2D:
+    def get_raw_logits(self, states: States, idxs=None) -> Tensor2D:
         """
         This is before illegal actions are masked out and the exit action is biased.
         Should be used for Discrete action spaces only.
@@ -71,10 +71,10 @@ class DiscreteActionsSampler(ActionsSampler):
         Returns:
             Tensor2D: A 2D tensor of shape (batch_size, n_actions) containing the logits for each action in each state in the batch.
         """
-        logits = self.estimator(states)
+        logits = self.estimator(states, idxs) if idxs is not None else self.estimator(states)
         return logits
 
-    def get_logits(self, states: States) -> Tensor2D:
+    def get_logits(self, states: States, idxs=None) -> Tensor2D:
         """Transforms the raw logits by masking illegal actions.
 
         Raises:
@@ -83,7 +83,7 @@ class DiscreteActionsSampler(ActionsSampler):
         Returns:
             Tensor2D: A 2D tensor of shape (batch_size, n_actions) containing the transformed logits.
         """
-        logits = self.get_raw_logits(states)
+        logits = self.get_raw_logits(states, idxs=idxs)
 
         if torch.any(torch.all(torch.isnan(logits), 1)):
             raise ValueError("NaNs in estimator")
@@ -96,18 +96,19 @@ class DiscreteActionsSampler(ActionsSampler):
     def get_probs(
         self,
         states: States,
+        idxs=None
     ) -> Tensor2D:
         """
         Returns:
             The probabilities of each action in each state in the batch.
         """
-        logits = self.get_logits(states)
+        logits = self.get_logits(states, idxs=idxs)
         logits[..., -1] -= self.sf_bias
         probs = torch.softmax(logits / self.temperature, dim=-1)
         return probs
 
-    def sample(self, states: States) -> Tuple[Tensor1D, Tensor1D]:
-        probs = self.get_probs(states)
+    def sample(self, states: States, idxs=None) -> Tuple[Tensor1D, Tensor1D]:
+        probs = self.get_probs(states, idxs=idxs)
         states.forward_masks, _ = correct_cast(
             states.forward_masks, states.backward_masks
         )
@@ -141,8 +142,8 @@ class BackwardDiscreteActionsSampler(DiscreteActionsSampler, BackwardActionsSamp
             estimator, temperature=temperature, sf_bias=0.0, epsilon=epsilon
         )
 
-    def get_logits(self, states: States) -> Tensor2D:
-        logits = self.get_raw_logits(states)
+    def get_logits(self, states: States, idxs=None) -> Tensor2D:
+        logits = self.get_raw_logits(states, idxs=idxs)
         if torch.any(torch.all(torch.isnan(logits), 1)):
             raise ValueError("NaNs in estimator")
         _, states.backward_masks = correct_cast(
@@ -151,8 +152,8 @@ class BackwardDiscreteActionsSampler(DiscreteActionsSampler, BackwardActionsSamp
         logits[~states.backward_masks] = -float("inf")
         return logits
 
-    def get_probs(self, states: States) -> Tensor2D:
-        logits = self.get_logits(states)
+    def get_probs(self, states: States, idxs=None) -> Tensor2D:
+        logits = self.get_logits(states, idxs=idxs)
         probs = torch.softmax(logits / self.temperature, dim=-1)
         # The following line is hack that works: when probs are nan, it means
         # that the state is already done (usually during backward sampling).
