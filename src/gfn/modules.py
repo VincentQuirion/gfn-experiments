@@ -193,8 +193,6 @@ class IdxAwareNeuralNet(NeuralNet):
             self.device = preprocessed_states.device
             self.to(self.device)
 
-        num_states = preprocessed_states.shape[0]
-
         idx_embeddings = self.idx_embedding_layer(idxs)
 
         preprocessed_states = torch.cat((idx_embeddings, preprocessed_states), dim=1)
