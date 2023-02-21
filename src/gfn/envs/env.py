@@ -71,11 +71,11 @@ class Env(ABC):
         """Same as the backward_step function, but without worrying whether or not the actions are valid, or masking."""
         pass
 
-    def reward(self, final_states: States,) -> TensorFloat:
+    def reward(self, final_states: States, idxs=None) -> TensorFloat:
         """Either this or log_reward needs to be implemented."""
-        return torch.exp(self.log_reward(final_states))
+        return torch.exp(self.log_reward(final_states, idxs))
 
-    def log_reward(self, final_states=None, final_states_raw=None, idxs=None) -> TensorFloat:
+    def log_reward(self, final_states: States, idxs=None) -> TensorFloat:
         """Either this or reward needs to be implemented."""
         raise NotImplementedError("log_reward function not implemented")
 

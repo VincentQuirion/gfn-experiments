@@ -5,8 +5,6 @@ import torch
 import torch.nn as nn
 from torchtyping import TensorType
 
-import gfn.config
-
 # Typing
 InputTensor = TensorType["batch_shape", "input_shape", float]
 OutputTensor = TensorType["batch_shape", "output_dim", float]

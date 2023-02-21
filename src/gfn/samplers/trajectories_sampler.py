@@ -7,7 +7,6 @@ from gfn.containers import States, Trajectories
 from gfn.envs import Env
 from gfn.samplers.actions_samplers import ActionsSampler, BackwardActionsSampler
 from gfn.modules import IdxAwareNeuralNet
-import gfn.config
 
 # Typing
 StatesTensor = TensorType["n_trajectories", "state_shape", torch.float]
@@ -38,15 +37,16 @@ class TrajectoriesSampler:
         idxs = None,
     ) -> Trajectories:
         if states is None:
-            assert (
-                n_trajectories is not None
-            ), "Either states or n_trajectories should be specified"
-            states = self.env.reset(batch_shape=(n_trajectories,))
+                assert (
+                    n_trajectories is not None
+                ), "Either states or n_trajectories should be specified"
+                states = self.env.reset(batch_shape=(n_trajectories,))
         else:
             assert (
-                len(states.batch_shape) == 1
-            ), "States should be a linear batch of states"
+                    len(states.batch_shape) == 1
+                ), "States should be a linear batch of states"
             n_trajectories = states.batch_shape[0]
+
 
         device = states.states_tensor.device
 
@@ -65,11 +65,7 @@ class TrajectoriesSampler:
         step = 0
 
         if idxs is None and isinstance(self.actions_sampler.estimator.module, IdxAwareNeuralNet):
-            idxs = torch.randint(gfn.config.batch_size, (n_trajectories,), device=device)
-
-        x = torch.zeros(
-            (n_trajectories, states.states_tensor.shape[1]), dtype=torch.long, device=device
-        )
+            raise ValueError("You must provide an idxs tensor to TrajectoriesSampler.sample_trajectories when using an IdxAwareNeuralNet")
 
         while not all(dones):
             actions = torch.full(
@@ -83,11 +79,10 @@ class TrajectoriesSampler:
             )
             actions_log_probs, valid_actions = self.actions_sampler.sample(
                 states[~dones],
-                idxs=idxs[~dones]
-            ) if idxs is not None else self.actions_sampler.sample(
+            ) if idxs is None else self.actions_sampler.sample(
                 states[~dones],
+                idxs=idxs[~dones]
             )
-
             actions[~dones] = valid_actions
             log_probs[~dones] = actions_log_probs
             trajectories_actions += [actions]
@@ -105,43 +100,25 @@ class TrajectoriesSampler:
                 new_states.is_initial_state if self.is_backward else sink_states_mask
             ) & ~dones
             trajectories_dones[new_dones & ~dones] = step
+            try:
+                trajectories_log_rewards[new_dones & ~dones] = self.env.log_reward(
+                    states[new_dones & ~dones]
+                ) if idxs is None else self.env.log_reward(
+                    states[new_dones & ~dones], idxs[new_dones & ~dones]
+                )
+            except NotImplementedError:
+                # print(states[new_dones & ~dones])
+                # print(torch.log(self.env.reward(states[new_dones & ~dones])))
+                trajectories_log_rewards[new_dones & ~dones] = torch.log(
+                    self.env.reward(states[new_dones & ~dones])
+                ) if idxs is None else torch.log(
+                    self.env.reward(states[new_dones & ~dones], idxs[new_dones & ~dones])
+                )
 
-            x[new_dones & ~dones] = states[new_dones & ~dones].states_tensor
-
-            # try:
-            #     trajectories_log_rewards[new_dones & ~dones] = self.env.log_reward(
-            #         states[new_dones & ~dones]
-            #     )
-            # except NotImplementedError:
-            #     # print(states[new_dones & ~dones])
-            #     # print(torch.log(self.env.reward(states[new_dones & ~dones])))
-            #     trajectories_log_rewards[new_dones & ~dones] = torch.log(
-            #         self.env.reward(states[new_dones & ~dones])
-            #     )
             states = new_states
             dones = dones | new_dones
 
             trajectories_states += [states.states_tensor]
-
-        dones = None
-
-        try:
-            trajectories_log_rewards = self.env.log_reward(
-                final_states_raw=x,
-                idxs=idxs,
-            ) if idxs is not None else self.env.log_reward(
-                final_states_raw=x,
-            )
-        except NotImplementedError:
-            # print(states[new_dones & ~dones])
-            # print(torch.log(self.env.reward(states[new_dones & ~dones])))
-            trajectories_log_rewards = torch.log(
-            self.env.reward(final_states_raw=x,
-            idxs=idxs,)
-            ) if idxs is not None else torch.log(
-            self.env.reward(final_states_raw=x,
-            )
-        )
 
         trajectories_states = torch.stack(trajectories_states, dim=0)
         trajectories_states = self.env.States(states_tensor=trajectories_states)

@@ -152,9 +152,8 @@ class HyperGrid(Env):
     def maskless_backward_step(self, states: StatesTensor, actions: TensorLong) -> None:
         states.scatter_(-1, actions.unsqueeze(-1), -1, reduce="add")
 
-    def reward(self, final_states=None, final_states_raw=None) -> TensorFloat:
-        if final_states_raw is None:    
-            final_states_raw = final_states.states_tensor
+    def reward(self, final_states=None) -> TensorFloat:  
+        final_states_raw = final_states.states_tensor
         R0, R1, R2 = (self.R0, self.R1, self.R2)
         ax = abs(final_states_raw / (self.height - 1) - 0.5)
         if not self.reward_cos:
@@ -242,83 +241,91 @@ class IdxAwareHyperGrid(HyperGrid):
         **kwargs
     ):
         super().__init__(*args, **kwargs)
-        self.reward = self.reward_bruteforce if reward == "bruteforce" else self._reward
+        match reward:
+            case "8x8":
+                self.reward = self.reward_bruteforce8x8
+            case "8x8x8":
+                self.reward = self.reward_bruteforce8x8x8
+            case "8x8x8x8":
+                self.reward = self.reward_bruteforce8x8x8x8
+            case default:
+                self.reward = self._reward
     
 
-    def _reward(self, final_states=None, final_states_raw=None, idxs=None) -> TensorFloat:
-        if final_states_raw is None:    
-            final_states_raw = final_states.states_tensor
-        reward = super().reward(final_states, final_states_raw)
+    def _reward(self, final_states=None, idxs=None) -> TensorFloat:
+        reward = super().reward(final_states)
 
         return reward
 
-    # def reward8x8(self, final_states=None, final_states_raw=None, idxs=None):
-    #     if final_states_raw is None:    
-    #         final_states_raw = final_states.states_tensor
-    #     reward = super().reward(final_states, final_states_raw)
-    #     means = torch.full((4, 2), -1., dtype=torch.long)
+    # TODO : make bruteforce reward functions DRY
+    def reward_bruteforce8x8(self, final_states, idxs=None):
+        if idxs is None:
+            return super().reward(final_states)
 
-    #     for i in range(4):
-    #         selected_states = final_states_raw[idxs==i]
-    #         mean = torch.mean(selected_states, dim=0, dtype=torch.float)
+        final_states_raw = final_states.states_tensor
 
-    #         reward[idxs==i][(selected_states - mean).pow(2).sum(dim=1).sqrt() > 2] = self.R0
+        reward =  super().reward(final_states)
 
-    #         for m in means:
-    #             if not torch.equal(m, torch.full((2,), -1., dtype=torch.long)):
-    #                 reward[idxs==i][(selected_states - m).pow(2).sum(dim=1).sqrt() < 5] = self.R0
-
-    #         means[i] = mean
-
-    #     return reward
-
-    
-    def reward_bruteforce(self, final_states=None, final_states_raw=None, idxs=None):
-        if final_states_raw is None:    
-            final_states_raw = final_states.states_tensor
-
-        R0, R1, R2 = (self.R0, self.R1, self.R2)
-        ax = abs(final_states_raw / (self.height - 1) - 0.5)
-        reward = (
-                R0 + (0.25 < ax).prod(-1) * R1 + ((0.3 < ax) * (ax < 0.4)).prod(-1) * R2
-        )
-
-        # print(reward)
         #  Partition
         reward[torch.stack(((idxs != 0), (final_states_raw[:, 0] <= 4), (final_states_raw[:, 1] <= 4)), dim=1).prod(-1).bool()] = self.R0
         reward[torch.stack(((idxs != 1), (final_states_raw[:, 0] <= 4), (final_states_raw[:, 1] >= 4)), dim=1).prod(-1).bool()] = self.R0
         reward[torch.stack(((idxs != 2), (final_states_raw[:, 0] >= 4), (final_states_raw[:, 1] <= 4)), dim=1).prod(-1).bool()] = self.R0
         reward[torch.stack(((idxs != 3), (final_states_raw[:, 0] >= 4), (final_states_raw[:, 1] >= 4)), dim=1).prod(-1).bool()] = self.R0
 
-
-        # print(final_states_raw, reward)
-
-
-        # reward = torch.full((final_states_raw.shape[0],), self.R0, device=self.device)
-
-        # reward[torch.all(final_states_raw == torch.tensor([2, 2], device=self.device, dtype=torch.long), dim=1) & (idxs == 0)] = self.R2
-        # reward[torch.all(final_states_raw == torch.tensor([2, 6], device=self.device, dtype=torch.long), dim=1) & (idxs == 1)] = self.R2
-        # reward[torch.all(final_states_raw == torch.tensor([6, 2], device=self.device, dtype=torch.long), dim=1) & (idxs == 2)] = self.R2
-        # reward[torch.all(final_states_raw == torch.tensor([6, 6], device=self.device, dtype=torch.long), dim=1) & (idxs == 3)] = self.R2
+        return reward
 
 
+    def reward_bruteforce8x8x8(self, final_states, idxs=None):
+        if idxs is None:
+            return super().reward(final_states)
 
-        # for i, state in enumerate(final_states_raw):
-        #     idx1_2x2 = (idxs[i] == 0) and torch.equal(state, torch.tensor([2, 2], dtype= torch.long, device=self.device))
-        #     idx2_2x6 = (idxs[i] == 1) and torch.equal(state, torch.tensor([2, 6], dtype= torch.long, device=self.device))
-        #     idx3_6x2 = idxs[i] == 2 and torch.equal(state, torch.tensor([6, 2], dtype= torch.long, device=self.device))
-        #     idx4_6x6 = idxs[i] == 3 and torch.equal(state, torch.tensor([6, 6], dtype= torch.long, device=self.device))
+        final_states_raw = final_states.states_tensor
 
-        #     if idx1_2x2 or idx2_2x6 or idx3_6x2 or idx4_6x6:
-        #     # if idx1_2x2 or idx2_2x6:
-        #         # print("youhou", i)
-        #         reward[i] = self.R2
-        #         # print(reward[i])
-                
-        # print(idx1_2x2, idx2_2x6, idx3_6x2, idx4_6x6)
-        # print(idxs)
-        # print(final_states_raw)
-        # print(reward)
+        reward = super().reward(final_states)
+
+        #  Partition
+        reward[torch.stack(((idxs != 0), (final_states_raw[:, 0] <= 4), (final_states_raw[:, 1] <= 4), (final_states_raw[:, 2] <= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 1), (final_states_raw[:, 0] <= 4), (final_states_raw[:, 1] >= 4), (final_states_raw[:, 2] <= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 2), (final_states_raw[:, 0] >= 4), (final_states_raw[:, 1] <= 4), (final_states_raw[:, 2] <= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 3), (final_states_raw[:, 0] >= 4), (final_states_raw[:, 1] >= 4), (final_states_raw[:, 2] <= 4)), dim=1).prod(-1).bool()] = self.R0
+
+        reward[torch.stack(((idxs != 4), (final_states_raw[:, 0] <= 4), (final_states_raw[:, 1] <= 4), (final_states_raw[:, 2] >= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 5), (final_states_raw[:, 0] <= 4), (final_states_raw[:, 1] >= 4), (final_states_raw[:, 2] >= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 6), (final_states_raw[:, 0] >= 4), (final_states_raw[:, 1] <= 4), (final_states_raw[:, 2] >= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 7), (final_states_raw[:, 0] >= 4), (final_states_raw[:, 1] >= 4), (final_states_raw[:, 2] >= 4)), dim=1).prod(-1).bool()] = self.R0
 
         return reward
+    
+    def reward_bruteforce8x8x8x8(self, final_states, idxs=None):
+        if idxs is None:
+            return super().reward(final_states)
+
+        final_states_raw = final_states.states_tensor
+
+        reward = super().reward(final_states, final_states_raw)
+
+        #  Partition
+        reward[torch.stack(((idxs != 0), (final_states_raw[:, 0] <= 4), (final_states_raw[:, 1] <= 4), (final_states_raw[:, 2] <= 4), (final_states_raw[:, 3] <= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 1), (final_states_raw[:, 0] <= 4), (final_states_raw[:, 1] >= 4), (final_states_raw[:, 2] <= 4), (final_states_raw[:, 3] <= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 2), (final_states_raw[:, 0] >= 4), (final_states_raw[:, 1] <= 4), (final_states_raw[:, 2] <= 4), (final_states_raw[:, 3] <= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 3), (final_states_raw[:, 0] >= 4), (final_states_raw[:, 1] >= 4), (final_states_raw[:, 2] <= 4), (final_states_raw[:, 3] <= 4)), dim=1).prod(-1).bool()] = self.R0
+
+        reward[torch.stack(((idxs != 4), (final_states_raw[:, 0] <= 4), (final_states_raw[:, 1] <= 4), (final_states_raw[:, 2] >= 4), (final_states_raw[:, 3] <= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 5), (final_states_raw[:, 0] <= 4), (final_states_raw[:, 1] >= 4), (final_states_raw[:, 2] >= 4), (final_states_raw[:, 3] <= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 6), (final_states_raw[:, 0] >= 4), (final_states_raw[:, 1] <= 4), (final_states_raw[:, 2] >= 4), (final_states_raw[:, 3] <= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 7), (final_states_raw[:, 0] >= 4), (final_states_raw[:, 1] >= 4), (final_states_raw[:, 2] >= 4), (final_states_raw[:, 3] <= 4)), dim=1).prod(-1).bool()] = self.R0
+
+        reward[torch.stack(((idxs != 0), (final_states_raw[:, 0] <= 4), (final_states_raw[:, 1] <= 4), (final_states_raw[:, 2] <= 4), (final_states_raw[:, 3] >= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 1), (final_states_raw[:, 0] <= 4), (final_states_raw[:, 1] >= 4), (final_states_raw[:, 2] <= 4), (final_states_raw[:, 3] >= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 2), (final_states_raw[:, 0] >= 4), (final_states_raw[:, 1] <= 4), (final_states_raw[:, 2] <= 4), (final_states_raw[:, 3] >= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 3), (final_states_raw[:, 0] >= 4), (final_states_raw[:, 1] >= 4), (final_states_raw[:, 2] <= 4), (final_states_raw[:, 3] >= 4)), dim=1).prod(-1).bool()] = self.R0
+
+        reward[torch.stack(((idxs != 4), (final_states_raw[:, 0] <= 4), (final_states_raw[:, 1] <= 4), (final_states_raw[:, 2] >= 4), (final_states_raw[:, 3] >= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 5), (final_states_raw[:, 0] <= 4), (final_states_raw[:, 1] >= 4), (final_states_raw[:, 2] >= 4), (final_states_raw[:, 3] >= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 6), (final_states_raw[:, 0] >= 4), (final_states_raw[:, 1] <= 4), (final_states_raw[:, 2] >= 4), (final_states_raw[:, 3] >= 4)), dim=1).prod(-1).bool()] = self.R0
+        reward[torch.stack(((idxs != 7), (final_states_raw[:, 0] >= 4), (final_states_raw[:, 1] >= 4), (final_states_raw[:, 2] >= 4), (final_states_raw[:, 3] >= 4)), dim=1).prod(-1).bool()] = self.R0
+
+        return reward
+
+
 
